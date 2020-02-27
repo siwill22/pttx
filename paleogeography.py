@@ -8,6 +8,7 @@ import scipy.interpolate as spi
 from create_gpml import create_gpml_regular_long_lat_mesh, create_gpml_healpix_mesh
 
 try:
+    import matplotlib
     import matplotlib.pyplot as plt
     from mpl_toolkits.basemap import Basemap
 except:
@@ -20,7 +21,7 @@ def load_paleogeography(pg_dir,env_list=None,
     # default environment_list is the format used for Cao++ 2017
     if env_list is None:
         env_list = ['lm','m','sm','i']
-    
+
     if single_file:
         print pg_dir
         features = pygplates.FeatureCollection(pg_dir)
@@ -40,7 +41,7 @@ def load_paleogeography(pg_dir,env_list=None,
                 for feature in features:
                     feature.set_shapefile_attribute('Layer',env)
                     pg_features.append(feature)
-    
+
             except:
                 print 'no features of type %s' % env
 
@@ -87,7 +88,7 @@ def paleogeography2topography_xyz(pg_points,topo_dict,sampling,
     Xr = []
     Yr = []
     Zr = []
-    
+
     for feature in pg_points:
         env = feature.get_shapefile_attribute('Layer')
         if env is not None:
@@ -126,7 +127,7 @@ def smooth_topography_grid(grdfile,filt_grdfile,wavelength):
 
 
 def load_netcdf(grdfile,z_field_name='z'):
-    
+
     ds_disk = xr.open_dataset(grdfile)
 
     data_array = ds_disk[z_field_name]
@@ -158,41 +159,53 @@ def load_netcdf(grdfile,z_field_name='z'):
 
 
 def create_slice(gridX,gridY,gridZ,GCPts,ProfilePoints):
-    # male a cross-section across a grid, given (two or more) points
+    # make a cross-section across a grid, given (two or more) points
     # defined in lat/long. Profiles are defined as great-circle paths between
     # defined points
-    
+
     f = spi.RectBivariateSpline(gridX,gridY,gridZ.T)
     XVals = f.ev(GCPts[:,1], GCPts[:,0])
     Zval = XVals.flatten()
-    
+
     return Zval
 
 
-def create_profile_points(PtLons,PtLats):
-    
+def create_profile_points(PtLons,PtLats,PointSpacing = 0.5):
+
     polyline_features = []
     polyline = pygplates.PolylineOnSphere(zip(PtLats,PtLons))
     polyline_feature = pygplates.Feature()
     polyline_feature.set_geometry(polyline)
     polyline_features.append(polyline_feature)
-    
+
     # Define point spacing in arc-degrees
     PointSpacing = 0.5
-    
+
     for feature in polyline_features:
         geometry = feature.get_geometry()
         arc_distance = np.degrees(geometry.get_arc_length())
         tesselated_polyline = geometry.to_tessellated(np.radians(PointSpacing))
         GCPts = tesselated_polyline.to_lat_lon_array()
-        
+
         # Actually this is wrong - since it will only give 'near to' 15 degrees, not exact
         label_points = geometry.to_tessellated(np.radians(15)).to_lat_lon_array()
-        
+
         arc_distance = np.degrees(geometry.get_arc_length())
         ProfilePoints = np.linspace(-arc_distance/2,arc_distance/2,GCPts.shape[0])
 
     return GCPts,ProfilePoints,arc_distance
+
+
+def profile_plate_ids(resolved_topologies,rotation_model,GreatCirclePoints):
+
+    partitioner = pygplates.PlatePartitioner(resolved_topologies,rotation_model)
+
+    plate_ids = []
+    for point in GreatCirclePoints:
+        partitioned_point = partitioner.partition_point(pygplates.PointOnSphere(point))
+        plate_ids.append(partitioned_point.get_feature().get_reconstruction_plate_id())
+
+    return plate_ids
 
 
 def plate_boundary_intersections(cross_section_geometry,shared_boundary_sections,ProfileX_kms):
@@ -200,11 +213,11 @@ def plate_boundary_intersections(cross_section_geometry,shared_boundary_sections
     # Given a polyline, and the subduction boundary sections, finds places where the cross-section
     # intersects a plate boundary
     # returns the Lat/Long coordinates and the distance along profile
-    
+
     subduction_intersections = []
     ridge_intersections = []
     other_intersections = []
-    
+
     for shared_boundary_section in shared_boundary_sections:
 
         for shared_subsegment in shared_boundary_section.get_shared_sub_segments():
@@ -220,13 +233,13 @@ def plate_boundary_intersections(cross_section_geometry,shared_boundary_sections
                 return_closest_indices=True)
 
             if min_distance_to_feature == 0:
-                
+
                 # find the distance along the section profile
                 #print section_index
                 cross_section_segment = cross_section_geometry.get_segments()[section_index]
                 distance_along_segment = pygplates.GeometryOnSphere.distance(closest_point_on_section,cross_section_segment.get_start_point())
                 distance_long_profile = distance_along_segment*pygplates.Earth.mean_radius_in_kms + ProfileX_kms[section_index]
-                
+
                 if shared_boundary_section.get_feature().get_feature_type() == pygplates.FeatureType.create_gpml('SubductionZone'):
                     polarity = get_subduction_polarity(shared_subsegment,topology_index,cross_section_segment,distance_along_segment)
                     subduction_intersections.append([closest_point_on_section,distance_long_profile,polarity])
@@ -240,7 +253,7 @@ def plate_boundary_intersections(cross_section_geometry,shared_boundary_sections
 
 
 def get_subduction_polarity(shared_subsegment,topology_index,cross_section_segment,distance_along_segment):
-# gets the subduction polarity at locations where a subduction segment intersects 
+# gets the subduction polarity at locations where a subduction segment intersects
 # another line segment
 
     topology_section_segment = shared_subsegment.get_resolved_geometry().get_segments()[topology_index]
@@ -266,10 +279,10 @@ def get_subduction_polarity(shared_subsegment,topology_index,cross_section_segme
     subduction_polarity = shared_subsegment.get_feature().get_enumeration(pygplates.PropertyName.gpml_subduction_polarity)
     if ((subduction_polarity == 'Left' and cross_section_left_to_right) or
         (subduction_polarity == 'Right' and not cross_section_left_to_right)):
-        cross_section_dips_left_to_right = False
+        cross_section_dips_left_to_right = True
     else:
         # NOTE: We'll also get here if (subduction_polarity == 'Unknown').
-        cross_section_dips_left_to_right = True
+        cross_section_dips_left_to_right = False
 
     return cross_section_dips_left_to_right
 
@@ -279,7 +292,7 @@ def topo2moho(topo_profile,ref_depth=20000,rhoM = 3300.,rhoC = 2700.):
 
     base_surface = (topo_profile*rhoC)/(rhoM-rhoC)
     moho_depth = -base_surface-ref_depth
-    
+
     return moho_depth
 
 
@@ -288,7 +301,7 @@ def topo2moho(topo_profile,ref_depth=20000,rhoM = 3300.,rhoC = 2700.):
 # PALEOBATHYMETRY
 def find_distance_to_nearest_ridge(resolved_topologies,shared_boundary_sections,
                                    point_features,fill_value=5000.):
-    
+
     all_point_distance_to_ridge = []
     all_point_lats = []
     all_point_lons = []
@@ -340,29 +353,32 @@ def find_distance_to_nearest_ridge(resolved_topologies,shared_boundary_sections,
                             point_distance_to_ridge.append(fill_value)
                             point_lats.append(point.to_lat_lon()[0])
                             point_lons.append(point.to_lat_lon()[1])
-                            
+
         all_point_distance_to_ridge.extend(point_distance_to_ridge)
         all_point_lats.extend(point_lats)
         all_point_lons.extend(point_lons)
-        
-        
+
+
     return all_point_lons,all_point_lats,all_point_distance_to_ridge
 
 
-# 
+#
 def age2depth(age_array,model='GDH1'):
 
     if model is 'GDH1':
         paleodepth = 2600. + 365. * np.sqrt(age_array)
         paleodepth[age_array>=20.] = 5651 - 2473*np.exp(-0.0278*age_array[age_array>=20.])
         paleodepth = -paleodepth
-    
+
     elif model is 'Crosby':
-        paleodepth = -2527. - (336. * np.sqrt(age_array))  
-    
+        paleodepth = 2652. + (324. * np.sqrt(age_array))
+        paleodepth[age_array>75.] = 5028. + 5.26*age_array[age_array>75.] - 250.*np.sin((age_array[age_array>75.]-75.)/30.)
+        paleodepth[age_array>160.] = 5750.
+        paleodepth = -paleodepth
+
     else:
         print 'unknown depth model'
-        
+
     return paleodepth
 
 
@@ -372,7 +388,7 @@ def paleobathymetry_from_topologies(resolved_topologies,shared_boundary_sections
 
     # Approximation of paleobathymetry based on distance to MORs
     # given some resolved topologies, and some point features (typically in the deep ocean),
-    # calculates the distance of each point to the nearest mid-ocean ridge segment that 
+    # calculates the distance of each point to the nearest mid-ocean ridge segment that
     # forms part of the boundary that the point is located within - then, determines
     # the implied age assuming a constant spreading rate and given age-depth model
 
@@ -415,7 +431,7 @@ def paleogeography_points_basemap(pg_points,env_color_dict,fill_color='darkblue'
 def paleogeography_cross_section(ProfileX_kms,topo_profile,moho_profile,
                                  subduction_intersections,ridge_intersections,
                                  vertical_exaggeration=20.):
-    
+
     plt.plot(ProfileX_kms,topo_profile,'k')
     plt.plot(ProfileX_kms,moho_profile,'r')
     #plt.plot([0,ProfileX_kms[-1]],[0,0],'lightblue',linewidth=3,zorder=1)
@@ -436,3 +452,102 @@ def paleogeography_cross_section(ProfileX_kms,topo_profile,moho_profile,
     plt.gca().set_aspect(vertical_exaggeration/1000.)  # 1000 because intended units are km for distance, but meters for depth
     plt.ylim(-65000,5000)
 
+
+def paleo_age_grid_cross_section(ProfileX_kms, profile_plate_ids, seafloor_age_profile,
+                                 subduction_intersections, daspect = 50, smoothing_iterations=20,
+                                 age_min = -50, age_max = 250, cmap=plt.cm.plasma_r):
+
+    seafloor_depth_profile = age2depth(seafloor_age_profile)/1000
+
+    subduction_indices = []
+    for point in subduction_intersections:
+
+        # the index will always be the nearest profile point on the updip side
+        temp_array = np.array(point[1] - ProfileX_kms)
+        if point[2]:
+            temp_array = temp_array*-1.
+        temp_array[temp_array<0] = 9e20
+
+        index_of_trench = temp_array.argmin()
+        subduction_indices.append(index_of_trench)
+
+        subducting_plate = profile_plate_ids[index_of_trench]
+
+        # get an array with the depths just within one plate polygon
+        depths_in_plate = seafloor_depth_profile[np.equal(profile_plate_ids,subducting_plate)]
+
+        #print depths_in_plate, depths_in_plate.shape
+        if ~point[2]:
+            depths_in_plate = np.flip(depths_in_plate) #[-1:0:-1]
+        if np.any(np.isnan(depths_in_plate)):
+            index = np.where(~np.isnan(depths_in_plate))[0].min()
+
+            if ~point[2]:
+                seafloor_depth_profile[index_of_trench-index:index_of_trench+1] = depths_in_plate[index]
+            else:
+                seafloor_depth_profile[index_of_trench:index_of_trench+index] = depths_in_plate[index]
+
+    # index
+    land_ocean_index = ~np.isnan(seafloor_depth_profile)
+
+    smooth_topo = profile_smoothing(seafloor_depth_profile, n_iter=smoothing_iterations)
+    moho = topo2moho(smooth_topo*1000,ref_depth=22000, rhoC=2200)/1000
+
+    moho[land_ocean_index] = seafloor_depth_profile[land_ocean_index]-6
+
+
+    # set up coloured ocean crust cells along profiles
+    xgrid = np.vstack((ProfileX_kms,ProfileX_kms))
+    zgrid = np.vstack((smooth_topo,moho))
+    tmp=np.vstack((seafloor_age_profile,seafloor_age_profile))
+
+    # PLOTTING
+    norm = matplotlib.colors.Normalize(vmin=age_min, vmax=age_max)
+
+    plt.figure(figsize=(20,10))
+
+    # first, fill in all crust with a grey background
+    plt.fill_between(ProfileX_kms,smooth_topo,moho,color='grey')
+
+    for point,subduction_index in zip(subduction_intersections,subduction_indices):
+        trench_depth = seafloor_depth_profile[subduction_index]
+        if point[2]:
+            slab_top_X = np.array([point[1],(point[1]-(10*daspect))])
+            slab_top_Y = np.array([trench_depth,-30])
+            slab_base_X = slab_top_X+150
+            slab_base_Y = slab_top_Y-6
+        else:
+            slab_top_X = np.array([point[1],(point[1]+(10*daspect))])
+            slab_top_Y = np.array([trench_depth,-30])
+            slab_base_X = slab_top_X-150
+            slab_base_Y = slab_top_Y-6
+
+        plt.fill_betweenx(slab_top_Y,slab_top_X,slab_base_X,color=cmap(norm(seafloor_age_profile[subduction_index])),zorder=5)
+
+        plt.pcolormesh(xgrid,zgrid,tmp,cmap=plt.cm.inferno_r,vmin=-10,vmax=150)
+
+
+    plt.pcolormesh(xgrid,zgrid,tmp,cmap=cmap,vmin=age_min,vmax=age_max)
+
+    plt.ylim(-50,5)
+    plt.xlim((ProfileX_kms.min(),ProfileX_kms.max()))
+    plt.gca().set_aspect(daspect)
+    #plt.show()
+
+
+def smooth(y, box_pts):
+    box = np.ones(box_pts)/box_pts
+    y_smooth = np.convolve(y, box, mode='same')
+    return y_smooth
+
+
+def profile_smoothing(profileZ,n_iter=5):
+
+    is_ocean_depth = np.copy(profileZ)
+    for i in range(n_iter):
+        #print i
+        profileZ[np.isnan(profileZ)] = 2.0
+        profileZ = smooth(profileZ,3)
+        profileZ[~np.isnan(is_ocean_depth)] = is_ocean_depth[~np.isnan(is_ocean_depth)]
+
+    return profileZ
