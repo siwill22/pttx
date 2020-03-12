@@ -180,7 +180,8 @@ def run_grid_pnp(recon_time, points, spatial_tree_of_uniform_recon_points, polyg
 ###########################################################
 
 
-def reconstruct_raster(raster_class, static_polygons, rotation_model, time_from, time_to, grid_sampling=1., anchor_plate_id=0):
+def reconstruct_raster(raster_class, static_polygons, rotation_model, time_from, time_to,
+                       grid_sampling=1., anchor_plate_id=0, sampling_method='scipy'):
 
     grid_longitudes, grid_latitudes = np.meshgrid(np.arange(-180.,180.0001,grid_sampling), np.arange(-90.,90.0001,grid_sampling))
     grid_longitudes = grid_longitudes.flatten()
@@ -201,7 +202,12 @@ def reconstruct_raster(raster_class, static_polygons, rotation_model, time_from,
                                                       spatial_tree_of_uniform_recon_points,
                                                       anchor_plate_id)
 
-    point_raster_values = raster_class.sample(time_from_point_lons, time_from_point_lats)
+    if sampling_method=='scipy':
+        point_raster_values = raster_class.sample(time_from_point_lons, time_from_point_lats)
+    elif sampling_method=='gmt':
+        point_raster_values = raster_class.sample_using_gmt(time_from_point_lons, time_from_point_lats)
+    elif sampling_method=='stripy':
+        point_raster_values = raster_class.sample_using_stripy(time_from_point_lons, time_from_point_lats)
 
     return time_to_point_lons, time_to_point_lats, point_raster_values
 
