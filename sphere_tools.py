@@ -88,7 +88,7 @@ def sampleOnSphere(inputLons, inputLats, inputVals, sample_points_lons, sample_p
         distance_upper_bound = np.radians(distance_upper_bound)
 
     if (tree is None):
-        tree = create_tree_for_spherical_data(inputLons, inputLats, inputVals)
+        tree = create_tree_for_spherical_data(inputLons, inputLats, inputVals, n=n)
 
     othetas = np.radians(90.-sample_points_lats)
     ophis   = np.radians(sample_points_lons)
